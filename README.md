@@ -1,6 +1,75 @@
 # newbradb_platform
 newbradb Platform repository
 
+## Homework 3. Security. 
+
+### 3.1 task01
+
+Создадим Service Accounts bob и dave.
+
+```console
+$ kubectl get sa
+NAME      SECRETS   AGE
+bob       1         116s
+dave      1         7s
+default   1         3m44s
+```
+
+Для аккаунта bob напишем RoleBinding c админ правами: 
+
+```console
+$ kubectl get clusterrolebinding bob
+NAME   ROLE                AGE
+bob    ClusterRole/admin   21m
+```
+
+### 3.2 task02
+
+Cоздадим namespace, Serive Account, ClusterRole, ClusterRoleBinding
+
+```console
+$ kubectl get ns
+NAME              STATUS   AGE
+default           Active   17m
+kube-node-lease   Active   17m
+kube-public       Active   17m
+kube-system       Active   17m
+prometheus        Active   31s
+
+$ kubectl get sa -n prometheus
+NAME      SECRETS   AGE
+carol     1         75s
+default   1         81s
+
+$ kubectl get clusterrolebinding.rbac.authorization.k8s.io prometheus 
+NAME         ROLE                     AGE
+prometheus   ClusterRole/prometheus   8m35s
+
+```
+
+### 3.3 task03
+
+Создадим namespace dev, Service Acccounts jane и ken. Jane admin, а ken нет.
+
+```console
+$ kubectl get ns
+NAME              STATUS   AGE
+default           Active   39m
+dev               Active   81s
+
+$ kubectl get sa -n dev
+NAME      SECRETS   AGE
+default   1         2m13s
+jane      1         77s
+ken       1         63s
+
+$ kubectl get rolebinding -n dev
+NAME   ROLE                AGE
+jane   ClusterRole/admin   2m27s
+ken    ClusterRole/view    86s
+
+```
+
 ## Homework 2. Kubernetes controllers.ReplicaSet, Deployment, DaemonSet
 
 ### 2.1 ReplicaSet
