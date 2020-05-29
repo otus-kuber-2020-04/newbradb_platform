@@ -1,6 +1,375 @@
 # newbradb_platform
 newbradb Platform repository
 
+## Homework 4. Networks
+
+### 4.1 Добавление проверок Pod
+
+Домашнее задание делаем в minikube :
+
+```console
+$ minikube start --driver=virtualbox
+```
+
+Добавляем  readinessProbe в web-pod.yaml из предыдущего задания, запускаем pod - результат аналогичный показаному на слайдах.
+
+Добавим другой вид проверок:
+
+```YAML
+    livenessProbe:
+      httpGet:
+        path: /index.html
+        port: 8000
+```
+
+Запускаем pod :
+
+```console
+$ kubectl apply -f web-pod.yaml 
+pod/web configured
+
+$ kubectl describe pod web 
+```
+
+Как видим Conditions изменились на True : 
+
+```
+Conditions:
+  Type              Status
+  Initialized       True 
+  Ready             True 
+  ContainersReady   True 
+  PodScheduled      True 
+```
+
+### 4.2 Создание Deployment
+
+Создадим deployment приложения web и применим его  :
+
+```console
+$ kubectl apply -f web-deploy.yaml 
+deployment.apps/web configured
+
+$ kubectl describe deployment web 
+```
+
+Conditions в результате :  
+
+```
+Conditions:
+  Type           Status  Reason
+  ----           ------  ------
+  Available      True    MinimumReplicasAvailable
+  Progressing    True    NewReplicaSetAvailable
+```
+
+Поробуем разные стратегии развертывания.  
+
+- maxSurge 0 и maxUnavailable 0 :  
+
+```console
+<pre>The Deployment &quot;web&quot; is invalid: spec.strategy.rollingUpdate.maxUnavailable: Invalid value: intstr.IntOrString{Type:0, IntVal:0, StrVal:&quot;&quot;}: may not be 0 when `maxSurge` is 0</pre>
+```
+
+- maxSurge 100% и maxUnavailable 100%.  :
+
+```console
+ROLLOUT STATUS:
+- [Current rollout | Revision 5] [MODIFIED]  default/web-56c5c7b8d6
+    ✅ ReplicaSet is available [3 Pods available of a 3 minimum]
+       - [Ready] web-56c5c7b8d6-szffw
+       - [Ready] web-56c5c7b8d6-d22fs
+       - [Ready] web-56c5c7b8d6-2kvcq
+```
+
+- maxSurge 0 и maxUnavailable 100% :  
+
+```console
+
+ROLLOUT STATUS:
+- [Current rollout | Revision 8] [MODIFIED]  default/web-8c54b8857
+    ⌛ Waiting for ReplicaSet to attain minimum available Pods (2 available of a 3 minimum)
+       - [Ready] web-8c54b8857-kvbfw
+       - [Ready] web-8c54b8857-9tmvr
+       - [ContainersNotReady] web-8c54b8857-sr887 containers with unready status: [web]
+
+
+ROLLOUT STATUS:
+- [Current rollout | Revision 6] [MODIFIED]  default/web-8c54b8857
+    ✅ ReplicaSet is available [3 Pods available of a 3 minimum]
+       - [Ready] web-8c54b8857-dbfh6
+       - [Ready] web-8c54b8857-5kwcz
+       - [Ready] web-8c54b8857-wrtz6
+```
+
+### 4.3 Создание Service | ClusterIP
+
+Создадим манифест web-svc-cip.yaml и применим его :
+
+```console
+$ kubectl apply -f web-svc-cip.yaml
+service/web-svc-cip created
+
+$ kubectl get svc
+NAME          TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
+kubernetes    ClusterIP   10.96.0.1     <none>        443/TCP   4m21s
+web-svc-cip   ClusterIP   10.99.87.26   <none>        80/TCP    15s
+```
+
+Проверим результат. Сurl работает :
+
+```
+# curl http://10.99.87.26/index.html
+<html>
+```
+
+Пинга нет:
+
+```
+--- 10.99.87.26 ping statistics ---
+3 packets transmitted, 0 packets received, 100% packet loss
+```
+
+IP не видно :
+
+```console
+# arp -an | grep 10.99.87.26
+# ip addr show | grep 10.99.87.26
+#
+```
+Вот где кластерный IP :
+
+```console
+# iptables --list -nv -t nat | grep 10.99.87.26
+    1    60 KUBE-SVC-WKCOG6KH24K26XRJ  tcp  --  *      *       0.0.0.0/0            10.99.87.26          /* default/web-svc-cip: cluster IP */ tcp dpt:80
+```
+
+Включим IPVS для kube-proxy чезез ConfigMap и удалим kube-proxy, чтобы DaemonSet поднял с новой конфигурацией :  
+
+```console
+$  kubectl --namespace kube-system edit configmap/kube-proxy
+configmap/kube-proxy edited
+
+$ kubectl --namespace kube-system delete pod --selector='k8s-app=kube-proxy'
+pod "kube-proxy-c4t9s" deleted
+```
+
+Удаляем лишние iptables правила на VM, устанавливаем ipvsadm через toolbox контейнер. 
+Теперь видно и наш сервис :
+
+```console
+[root@minikube ~]# ipvsadm --list -n
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+TCP  10.99.87.26:80 rr
+  -> 172.17.0.4:8000              Masq    1      0          0         
+  -> 172.17.0.5:8000              Masq    1      0          0         
+  -> 172.17.0.6:8000              Masq    1      0          0  
+```
+Кластерный IP успешно пингуется :
+
+```
+--- 10.99.87.26 ping statistics ---
+1 packets transmitted, 1 packets received, 0% packet loss
+```
+
+Кластерный IP теперь есть на интерфейсе kube-ipvs0 :
+
+```console
+# ip addr show kube-ipvs0
+16: kube-ipvs0: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN group default 
+    link/ether 5a:b2:69:ac:b2:31 brd ff:ff:ff:ff:ff:ff
+    inet 10.99.87.26/32 brd 10.99.87.26 scope global kube-ipvs0
+       valid_lft forever preferred_lft forever
+```
+
+### 4.3 Установка MetalLB
+
+Устанавливаем MetalLB, пишем манифест metallb-config.yaml и манифест web-svc-lb.yaml для LoadBalancer сервиса.  
+
+Проверка конфигурации:
+
+```console
+$ kubectl --namespace metallb-system logs pod/controller-57f648cb96-7g696
+{"caller":"service.go:114","event":"ipAllocated","ip":"172.17.255.1","msg":"IP address assigned by controller","service":"default/web-svc-lb","ts":"2020-05-27T12:05:28.83633644Z"}
+
+$ kubectl describe svc web-svc-lb
+Name:                     web-svc-lb
+Namespace:                default
+Labels:                   <none>
+Annotations:              Selector:  app=web
+Type:                     LoadBalancer
+IP:                       10.106.15.11
+LoadBalancer Ingress:     172.17.255.1
+Port:                     <unset>  80/TCP
+TargetPort:               8000/TCP
+NodePort:                 <unset>  31887/TCP
+Endpoints:                172.17.0.4:8000,172.17.0.5:8000,172.17.0.6:8000
+Session Affinity:         None
+External Traffic Policy:  Cluster
+```
+
+Сеть кластера изолирована от нашей основной ОС. Мы не сможем открыть http://172.17.255.1/index.html  
+Выполним minikube ssh чтобы узнать IP-адрес виртуалки
+
+```console
+$ ip addr show eth1
+3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000
+    link/ether 08:00:27:fc:f9:81 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.99.100/24 brd 192.168.99.255 scope global dynamic eth1
+       valid_lft 740sec preferred_lft 740sec
+```
+
+Проверим IP с помощью minikube на всякий случай: 
+
+```console
+$ minikube ip
+192.168.99.100
+```
+
+Добавляем статический маршрут :
+
+```console
+$ sudo ip route add 172.17.255.0/24 via  192.168.99.100
+```
+
+Страница http://172.17.255.1/index.html работает  
+
+```
+$ curl http://172.17.255.1/index.html 
+<html>
+<head/>
+<body>
+<!-- IMAGE BEGINS HERE -->
+```
+
+
+### 4.4 Создание Ingress
+
+Устанавливем основной манифест для ingress-nginx, потом пишем манифест nginx-lb.yaml.  
+Применим созданный манифест и посмотрим на IP-адрес :
+
+```cosole
+$ kubectl describe svc ingress-nginx -n ingress-nginx
+Name:                     ingress-nginx
+Namespace:                ingress-nginx
+Labels:                   app.kubernetes.io/name=ingress-nginx
+                          app.kubernetes.io/part-of=ingress-nginx
+Annotations:              Selector:  app.kubernetes.io/component=controller,app.kubernetes.io/instance=ingress-nginx,app.kubernetes.io/name=ingress-nginx
+Type:                     LoadBalancer
+IP:                       10.111.189.45
+LoadBalancer Ingress:     172.17.255.2
+Port:                     http  80/TCP
+```
+
+curl отдает 404 от nginx:
+
+```
+$ curl http://172.17.255.2/index.html
+<html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>nginx/1.17.10</center>
+```
+
+Напишем манифест web-svc-headless.yaml с параметром clusterIP: None  
+Проверим что IP действительно не назаначен:
+
+```console
+$ kubectl apply -f web-svc-headless.yaml
+service/web-svc created
+
+$ kubectl describe svc web-svc
+Name:              web-svc
+Namespace:         default
+Labels:            <none>
+Annotations:       Selector:  app=web
+Type:              ClusterIP
+IP:                None
+```
+
+Напишем манифест для ingress-прокси web-ingress.yaml и проверим коректно ли заполнены Address и Backends:  
+
+```console
+$ kubectl describe ingress/web
+Name:             web
+Namespace:        default
+Address:          192.168.99.100
+Default backend:  default-http-backend:80 (<error: endpoints "default-http-backend" not found>)
+Rules:
+  Host        Path  Backends
+  ----        ----  --------
+  *           
+              /web   web-svc:8000 (172.17.0.4:8000,172.17.0.5:8000,172.17.0.6:8000)
+Annotations:  nginx.ingress.kubernetes.io/rewrite-target: /
+Events:
+  Type    Reason  Age   From                      Message
+  ----    ------  ----  ----                      -------
+  Normal  CREATE  22s   nginx-ingress-controller  Ingress default/web
+  Normal  UPDATE  4s    nginx-ingress-controller  Ingress default/web
+```
+
+Можно проверить что страничка доступна :
+
+```console
+$ curl http://172.17.255.2/web/index.html 
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0<html>
+<head/>
+<body>
+<!-- IMAGE BEGINS HERE -->
+```
+
+### 4.5 Задание со ⭐ | DNS через MetalLB
+
+Пишем манифест corendns-lb.yaml. Добавим анотации чтобы coredns запрашивал IP из определеного нами пула :
+
+```YAML
+  annotations:
+    metallb.universe.tf/allow-shared-ip: coredns
+```
+
+Находим нужные pods и смотрим их Labels: 
+
+```console
+$ kubectl get pods -n kube-system
+NAME                               READY   STATUS    RESTARTS   AGE
+coredns-66bff467f8-4488n           1/1     Running   0          3h18m
+coredns-66bff467f8-b8ms9           1/1     Running   0          3h18m
+
+
+$ kubectl describe pod coredns-66bff467f8-4488n -n kube-system | grep Labels
+Labels:               k8s-app=kube-dns
+```
+
+Добавим selector в манифест : 
+
+```YAML
+  selector:
+    k8s-app: kube-dns
+```
+
+Также укажем необходимый TCP порт. Манифест corendns-lb-udp.yaml будет такой же, просто изменим название и протокол на UDP.
+Применим оба манифеста и затестим через nslookup:  
+
+```console
+$ nslookup web-svc-cip.default.svc.cluster.local 172.17.255.10
+Server:		172.17.255.10
+Address:	172.17.255.10#53
+
+Name:	web-svc-cip.default.svc.cluster.local
+Address: 10.110.237.26
+
+
+$ kubectl get svc -n kube-system
+NAME             TYPE           CLUSTER-IP      EXTERNAL-IP     PORT(S)                  AGE
+coredns-lb       LoadBalancer   10.99.11.3      172.17.255.10   53:32215/TCP             3h43m
+coredns-lb-udp   LoadBalancer   10.108.47.120   172.17.255.10   53:32537/UDP             3h42m
+``` 
+
 ## Homework 3. Security. 
 
 ### 3.1 task01
