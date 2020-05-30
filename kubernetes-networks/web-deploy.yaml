@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment 
+metadata:
+  name: web
+spec:
+  replicas: 3 
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 100%
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web 
+    spec: # Описание Pod
+      containers: # Описание контейнеров внутри Pod
+      - name: web # Название контейнера
+        image: newbradburyfan/less1_web:0.1 # Образ из которого создается контейнер
+        livenessProbe:
+          httpGet:
+            path: /index.html
+            port: 8000
+        readinessProbe:
+          httpGet:
+            path: /index.html
+            port: 8000
+        volumeMounts:
+        - name: app
+          mountPath: /app
+      initContainers:
+      - name: init-web
+        image: busybox:1.31.1
+        command: ['sh', '-c', 'wget -O- https://tinyurl.com/otus-k8s-intro | sh']
+        volumeMounts:
+        - name: app
+          mountPath: /app
+      volumes:
+      - name: app
+        emptyDir: {}
