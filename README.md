@@ -1,6 +1,56 @@
 # newbradb_platform
 newbradb Platform repository
 
+## Homework 5. Volumes
+
+Применим манифест minio-statefulset.yaml c StatefulSet конфигурацией :
+
+```console
+$ kubectl apply -f minio-statefulset.yaml
+statefulset.apps/minio created
+```
+
+Проверим есть ли pod и PVC :  
+
+```
+$ kubectl get pods
+NAME      READY   STATUS    RESTARTS   AGE
+minio-0   1/1     Running   0          19s
+
+$ kubectl get pvc
+NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+data-minio-0   Bound    pvc-7fa871b5-a65f-448c-948c-1bbdca47c331   10Gi       RWO            standard       6m7s
+
+$ kubectl get pv
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                  STORAGECLASS   REASON   AGE
+pvc-7fa871b5-a65f-448c-948c-1bbdca47c331   10Gi       RWO            Delete           Bound    default/data-minio-0   standard                8m6s
+
+$ kubectl get pods
+NAME      READY   STATUS    RESTARTS   AGE
+minio-0   1/1     Running   0          20m
+```
+
+Создадим Headless Service : 
+
+```console
+$ kubectl apply -f minio-headless-service.yaml
+service/minio created
+```
+
+### Задание со *
+
+Манифест  берем отсюда https://kubernetes.io/docs/concepts/configuration/secret/  
+Меняем MINIO_ACCESS_KEYи MINIO_SECRET_KEY :
+
+```
+$ echo -n 'minio123' | base64
+bWluaW8xMjM=
+
+$ echo -n 'minio' | base64
+bWluaW8=
+```
+
+
 ## Homework 4. Networks
 
 ### 4.1 Добавление проверок Pod
