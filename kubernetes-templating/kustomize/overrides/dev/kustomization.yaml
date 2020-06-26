@@ -1,0 +1,6 @@
+bases:
+- ../../base
+namePrefix: dev-
+namespace: hipster-shop
+commonLabels:
+  environment: development
