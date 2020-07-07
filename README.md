@@ -1,6 +1,157 @@
 # newbradb_platform
 newbradb Platform repository
 
+### Homework 7. Операторы, CustomResourceDefinition
+
+Работать будем в minikube :
+
+```console
+$ minikube start
+```
+
+Cоздадим CustomResource deploy/cr.yml и попробуем применить :  
+
+```console
+$ kubectl apply -f deploy/cr.yml 
+error: unable to recognize "deploy/cr.yml": no matches for kind "MySQL" in version "otus.homework/v1"
+```
+
+Ошибка связана с отсутсвием объектов типа MySQL в API kubernetes.
+
+Создадим CRD deploy/crd.yml и пересоздадим CR :
+
+```console
+$ kubectl apply -f deploy/crd.yml
+customresourcedefinition.apiextensions.k8s.io/mysqls.otus.homework created
+
+$ kubectl apply -f deploy/cr.yml 
+mysql.otus.homework/mysql-instance created
+```
+
+C созданными объектами можно взаимодействовать через kubectl:
+
+```console
+$ kubectl get crd
+NAME                   CREATED AT
+mysqls.otus.homework   2020-06-26T14:43:27Z
+
+$ kubectl get mysqls.otus.homework
+NAME             AGE
+mysql-instance   79s
+
+$ kubectl describe mysqls.otus.homework mysql-instance
+Name:         mysql-instance
+Namespace:    default
+Labels:       <none>
+Annotations:  API Version:  otus.homework/v1
+Kind:         MySQL
+Metadata:
+  Creation Timestamp:  2020-06-26T14:50:43Z
+  Generation:          1
+  Managed Fields:
+    API Version:  otus.homework/v1
+    Fields Type:  FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .:
+          f:kubectl.kubernetes.io/last-applied-configuration:
+      f:spec:
+        .:
+        f:database:
+        f:image:
+        f:password:
+        f:storage_size:
+      f:usless_data:
+    Manager:         kubectl
+    Operation:       Update
+    Time:            2020-06-26T14:50:43Z
+  Resource Version:  10105
+  Self Link:         /apis/otus.homework/v1/namespaces/default/mysqls/mysql-instance
+  UID:               d16be27b-9ea3-4786-b466-78cccf0ff0c1
+Spec:
+  Database:      otus-database
+  Image:         mysql:5.7
+  Password:      otuspassword
+  storage_size:  1Gi
+usless_data:     useless info
+Events:          <none>
+```
+
+## Деплой  оператора
+
+Применим манифесты:
+- service-account.yml
+- role.yml
+- role-binding.yml
+- deploy-operator.yml
+
+Проверяем что появились pvc:
+
+```console
+$ kubectl get pvc
+NAME                        STATUS   VOLUME                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+backup-mysql-instance-pvc   Bound    backup-mysql-instance-pv   1Gi        RWO                           13m
+mysql-instance-pvc          Bound    mysql-instance-pv          1Gi        RWO                           13m
+```
+
+Заполним базу созданного mysql-instance:
+
+```console
+$ export MYSQLPOD=$(kubectl get pods -l app=mysql-instance -o jsonpath=" {.items[*].metadata.name}")
+$ kubectl exec -it $MYSQLPOD -- mysql -u root -potuspassword -e "CREATE TABLE test ( id smallint unsigned not null auto_increment, name varchar(20) not null, constraint pk_example primary key (id) );" otus-database
+mysql: [Warning] Using a password on the command line interface can be insecure.
+$ kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "INSERT INTO test (id, name) VALUES ( null, 'some data' );" otus-database
+mysql: [Warning] Using a password on the command line interface can be insecure.
+$ kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "INSERT INTO test ( id, name ) VALUES ( null, 'some data-2' );" otus-database
+mysql: [Warning] Using a password on the command line interface can be insecure.
+```
+
+Посмотрим содержание таблицы :
+
+```console
+ kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database
+mysql: [Warning] Using a password on the command line interface can be insecure.
++----+-------------+
+| id | name        |
++----+-------------+
+|  1 | some data   |
+|  2 | some data-2 |
++----+-------------+
+```
+
+Удалим mysql-instance:
+
+```console
+$ kubectl delete mysqls.otus.homework mysql-instance
+mysql.otus.homework "mysql-instance" deleted
+```
+
+Job выполнилась :
+
+```console
+$ kubectl get jobs.batch
+NAME                         COMPLETIONS   DURATION   AGE
+backup-mysql-instance-job    1/1           0s         64s
+```
+
+Создадим заново mysql-instance:
+
+```console 
+$ kubectl apply -f kubernetes-operators/deploy/cr.yml 
+mysql.otus.homework/mysql-instance created
+$ export MYSQLPOD=$(kubectl get pods -l app=mysql-instance -o jsonpath=" {.items[*].metadata.name}")
+$ kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database
+mysql: [Warning] Using a password on the command line interface can be insecure.
++----+-------------+
+| id | name        |
++----+-------------+
+|  1 | some data   |
+|  2 | some data-2 |
++----+-------------+
+```
+
+
 ## Homework 6. Шаблонизация манифестов Kubernetes
 
 ### 6.1 Intro
