@@ -1,6 +1,195 @@
 # newbradb_platform
 newbradb Platform repository
 
+### Homework 8. Мониторинг сервиса в кластере k8s
+
+Создадим кастомный docker image для nginx.
+
+Dockerfile :
+```
+FROM nginx:1.19.0-alpine
+
+COPY default.conf /etc/nginx/conf.d/
+
+EXPOSE 80
+```
+
+```console
+$ docker build -t newbradburyfan/nginx .
+Sending build context to Docker daemon  3.072kB
+Step 1/3 : FROM nginx:1.19.0-alpine
+```
+
+Установим  prometheus-operator с помощью Helm3. 
+
+```console
+$ kubectl create ns monitoring
+namespace/monitoring created
+
+$ helm upgrade --install  prometheus-operator stable/prometheus-operator -n monitoring
+Release "prometheus-operator" does not exist. Installing it now.
+manifest_sorter.go:192: info: skipping unknown hook: "crd-install"
+manifest_sorter.go:192: info: skipping unknown hook: "crd-install"
+manifest_sorter.go:192: info: skipping unknown hook: "crd-install"
+manifest_sorter.go:192: info: skipping unknown hook: "crd-install"
+manifest_sorter.go:192: info: skipping unknown hook: "crd-install"
+manifest_sorter.go:192: info: skipping unknown hook: "crd-install"
+NAME: prometheus-operator
+LAST DEPLOYED: Tue Jul  7 18:59:27 2020
+NAMESPACE: monitoring
+STATUS: deployed
+REVISION: 1
+NOTES:
+The Prometheus Operator has been installed. Check its status by running:
+  kubectl --namespace monitoring get pods -l "release=prometheus-operator"
+
+Visit https://github.com/coreos/prometheus-operator for instructions on how
+to create & configure Alertmanager and Prometheus instances using the Operator.
+
+$ kubectl --namespace monitoring get pods 
+NAME                                                      READY   STATUS    RESTARTS   AGE
+alertmanager-prometheus-operator-alertmanager-0           2/2     Running   0          2m24s
+prometheus-operator-grafana-86b8c5cb8-tzk7d               2/2     Running   0          2m55s
+prometheus-operator-kube-state-metrics-689db7b754-fhf5v   1/1     Running   0          2m55s
+prometheus-operator-operator-75f54f8569-8h77j             2/2     Running   0          2m55s
+prometheus-operator-prometheus-node-exporter-p59rl        1/1     Running   0          2m55s
+prometheus-prometheus-operator-prometheus-0               3/3     Running   1          2m12s
+```
+
+Напишем манифест deployment.yaml содержащий в себе 3 контейнера nginx 
+
+```YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  labels:
+    app: nginx  
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.19.0-alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+          - name: nginx-config
+            mountPath: /etc/nginx/nginx.conf
+            subPath: nginx.conf
+      - name: nginx-exporter
+        image: newbradburyfan/nginx
+        env:
+          - name: SCRAPE_URI
+            value: "http://127.0.0.1:8000/basic_status"
+          - name: NGINX_RETRIES
+            value: "10"
+        ports:
+        - containerPort: 9113
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: nginx-config
+```
+
+Манифест nginx-service.yaml
+
+```YAML
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  selector:
+    app: nginx
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: 80
+  - name: nginx-exporter
+    port: 9113
+    protocol: TCP
+    targetPort: 9113
+```
+
+Манифест monitor-service.yaml 
+
+```YAML
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nginx-sm
+  namespace: default
+  labels:
+    release: prometheus-operator
+spec:
+  namespaceSelector:
+    matchNames:
+    - default
+  selector:
+    matchLabels:
+      app: nginx
+  endpoints:
+  - port: nginx-exporter
+```
+
+
+Проверим работу :
+
+```console
+$ kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-6c6c6d68c7-9w5mb   2/2     Running   0          3m24s
+nginx-6c6c6d68c7-pk57q   2/2     Running   0          3m24s
+nginx-6c6c6d68c7-x9cbk   2/2     Running   0          3m24s
+
+$ kubectl port-forward service/nginx 9113:9113
+Forwarding from 127.0.0.1:9113 -> 9113
+Forwarding from [::1]:9113 -> 9113
+Handling connection for 9113
+
+$ curl http://127.0.0.1:9113/metrics
+# HELP nginx_connections_accepted Accepted client connections
+# TYPE nginx_connections_accepted counter
+nginx_connections_accepted 1
+# HELP nginx_connections_active Active client connections
+# TYPE nginx_connections_active gauge
+nginx_connections_active 1
+# HELP nginx_connections_handled Handled client connections
+# TYPE nginx_connections_handled counter
+nginx_connections_handled 1
+# HELP nginx_connections_reading Connections where NGINX is reading the request header
+# TYPE nginx_connections_reading gauge
+nginx_connections_reading 0
+# HELP nginx_connections_waiting Idle client connections
+# TYPE nginx_connections_waiting gauge
+nginx_connections_waiting 0
+# HELP nginx_connections_writing Connections where NGINX is writing the response back to the client
+# TYPE nginx_connections_writing gauge
+nginx_connections_writing 1
+# HELP nginx_http_requests_total Total http requests
+# TYPE nginx_http_requests_total counter
+nginx_http_requests_total 9
+# HELP nginx_up Status of the last metric scrape
+# TYPE nginx_up gauge
+nginx_up 1
+# HELP nginxexporter_build_info Exporter build information
+# TYPE nginxexporter_build_info gauge
+nginxexporter_build_info{gitCommit="a2910f1",version="0.7.0"} 
+```
+
+
 ### Homework 7. Операторы, CustomResourceDefinition
 
 Работать будем в minikube :
